@@ -7,6 +7,9 @@
 import json, sys, numpy as np # jsonサポート、システム、数値ユーティリティ(と思われる)
 from scipy import misc, signal # scipyより、その他処理、信号処理
 from PIL import Image # 画像ファイル取り扱いユーティリティ
+import os
+import tensorflow as tf
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # Model export script: https://mrcn.st/t/export_model.lua (needs a working waifu2x install)
 
 infile, outfile, modelpath = sys.argv[1:] # コマンドライン引数読み込み(入力ファイル、出力ファイル、モデルjsonファイルへのパス)
@@ -49,8 +52,16 @@ for step in model: # ループ:ステップ(1つのモデル階層) 始め
     
     for bias, weights in zip(step["bias"], step["weight"]): # ループ:バイアス&重み行列集合 始め
         partial = None # partialをNone(null値)に初期化
+        print("weight:",np.array(weights).shape)
         for ip, kernel in zip(planes, weights): # ループ:入力平面&核(重み行列) 始め
-            p = signal.fftconvolve(ip, np.float32(kernel), "valid") # 入力平面に対して核を畳み込み演算
+            print(ip.shape)
+            x = tf.constant(ip, shape=(1, ip.shape[0], ip.shape[1], 1), dtype=tf.float32)
+            W = tf.constant(kernel, shape=(3, 3, 1, 1),dtype=tf.float32)
+            conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
+            with tf.Session() as sess:
+                p = sess.run(conv)
+            p = p.reshape(ip.shape)
+            # p = signal.fftconvolve(ip, np.float32(kernel), "valid") # 入力平面に対して核を畳み込み演算
             if partial is None:
                 partial = p # 最初の畳み込み演算の結果を代入
             else:

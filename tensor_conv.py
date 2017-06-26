@@ -15,9 +15,12 @@ W = np.array([[
 print(W.shape)
 x = tf.constant(x, dtype=tf.float32)
 W = tf.constant(W, dtype=tf.float32)
+print
 conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
 
 with tf.Session() as sess:
+    print(x.shape)
+    print(W.shape)
     result = sess.run(conv)
     print(result.shape)    
     print(result)
