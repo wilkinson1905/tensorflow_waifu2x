@@ -53,12 +53,11 @@ for step in model: # ループ:ステップ(1つのモデル階層) 始め
     assert step["nOutputPlane"] == len(step["weight"]) == len(step["bias"])
     # モデルの出力平面はモデルの重み行列集合の数とそのバイアスの数と一致していなければならない
     # つまり、各ステップの重み行列集合の数とそのバイアスの数だけ、そのステップによって平面が出力される
-    print( step["nInputPlane"], step["nOutputPlane"],np.array(step["bias"]).shape,planes.shape)
     # o_planes = [] # 出力平面の格納場所を初期化
+    print("before reshape", planes.shape)
     x = tf.constant(planes, shape=(1, planes.shape[1], planes.shape[2], step["nInputPlane"]), dtype=tf.float32)
     W = tf.constant(np.array(step["weight"]), shape=(3, 3, step["nInputPlane"], step["nOutputPlane"]),dtype=tf.float32)
     b = tf.constant(np.array(step["bias"]), shape=(1, 1, 1,  step["nOutputPlane"]), dtype=tf.float32)
-    print("b",b.shape)
     conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID")
     conv = conv + b
     h = tf.maximum(conv, 0.1 * conv)
@@ -96,7 +95,7 @@ for step in model: # ループ:ステップ(1つのモデル階層) 始め
 
 assert len(planes) == 1 # 最後のステップにおける出力平面は1つでなければならない
 print(planes.shape)
-im[:,:,0] = np.clip(planes.reshape((planes.shape[1], planes.shape[2])), 0, 1) * 255
+im[:,:,0] = np.clip(planes.reshape(planes.shape[1], planes.shape[2]), 0, 1) * 255
 # 得られた出力平面の全要素を0~1にクリップした後、
 misc.toimage(im, mode="YCbCr").convert("RGB").save(outfile)
 sys.stderr.write("Done\n")
