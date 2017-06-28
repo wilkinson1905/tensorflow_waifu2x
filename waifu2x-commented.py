@@ -9,7 +9,7 @@ from scipy import misc, signal # scipyより、その他処理、信号処理
 from PIL import Image # 画像ファイル取り扱いユーティリティ
 import os
 import tensorflow as tf
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 # Model export script: https://mrcn.st/t/export_model.lua (needs a working waifu2x install)
 
 infile, outfile = sys.argv[1:] # コマンドライン引数読み込み(入力ファイル、出力ファイル、モデルjsonファイルへのパス)
