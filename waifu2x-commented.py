@@ -44,22 +44,24 @@ count = sum(step["nInputPlane"] * step["nOutputPlane"] for step in model)# 畳�
 # つまり、countの数だけ入力平面に対する重み行列の畳み込みが行われる。
 planes = np.transpose(planes, (0, 3, 1, 2))
 progress = 0
-
+x = None
 for step in model: # ループ:ステップ(1つのモデル階層) 始め
-    assert step["nInputPlane"] == planes.shape[1]
+    if x is None:
+         x = tf.constant(planes, shape=(1, step["nInputPlane"],planes.shape[2], planes.shape[3]), dtype=tf.float32)
+    # assert step["nInputPlane"] == planes.shape[1]
     # このステップのモデルに定義された入力平面の数と実際の入力平面の数は一致していなければならない
     assert step["nOutputPlane"] == len(step["weight"]) == len(step["bias"])
     # モデルの出力平面はモデルの重み行列集合の数とそのバイアスの数と一致していなければならない
     # つまり、各ステップの重み行列集合の数とそのバイアスの数だけ、そのステップによって平面が出力される
     # o_planes = [] # 出力平面の格納場所を初期化
-    x = tf.constant(planes, shape=(1, step["nInputPlane"],planes.shape[2], planes.shape[3]), dtype=tf.float32)
+   
     W = tf.constant(np.transpose(np.array(step["weight"]), (2, 3, 1, 0)), shape=(3, 3, step["nInputPlane"], step["nOutputPlane"]),dtype=tf.float32)
     b = tf.constant(np.array(step["bias"]), shape=(1,step["nOutputPlane"], 1, 1), dtype=tf.float32)
-    conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NCHW")
-    conv = conv + b
-    h = tf.maximum(conv, 0.1 * conv)
-    with tf.Session() as sess:
-        planes = sess.run(h)
+    x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NCHW")
+    x = x + b
+    x = tf.maximum(x, 0.1 * x)
+with tf.Session() as sess:
+    planes = sess.run(x)
 
 # ループ:ステップ 終わり
 
