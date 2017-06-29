@@ -14,13 +14,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 #infile, outfile = sys.argv[1:] # コマンドライン引数読み込み(入力ファイル、出力ファイル、モデルjsonファイルへのパス)
 
-scalemodelpath = "scale2.0x_model.json"
-denoisemodelpath = "noise3_model.json"
-split_size = 64
 
-model_list = []
-model_list.append(json.load(open(scalemodelpath)))# jsonファイルのロード(jsonファイルに記述された構造をそのままメモリ上に展開していると思われる)
-model_list.append(json.load(open(denoisemodelpath)))
 # モデルの1階層が持つ情報:
 #   * nInputPlane : このモデルに入力するべき平面の数
 #   * nOutputPlane : このモデルから出力されるべき平面の数
@@ -45,6 +39,13 @@ model_list.append(json.load(open(denoisemodelpath)))
 
 
 def upscale_and_denoise(images):#images=[batch,width,hight],Y of YUV
+    #定数定義
+    scalemodelpath = "scale2.0x_model.json"
+    denoisemodelpath = "noise3_model.json"
+    #モデルの読み込み
+    model_list = []
+    model_list.append(json.load(open(scalemodelpath)))# jsonファイルのロード(jsonファイルに記述された構造をそのままメモリ上に展開していると思われる)
+    model_list.append(json.load(open(denoisemodelpath)))
     images = np.array(images)
     padding_size = len(model_list[0]) + len(model_list[1])
     planes = np.pad(images,((0,0),(padding_size,padding_size),(padding_size,padding_size)), "edge") / 255.0
@@ -56,6 +57,7 @@ def upscale_and_denoise(images):#images=[batch,width,hight],Y of YUV
     # count = sum(step["nInputPlane"] * step["nOutputPlane"] for step in model)# 畳み込み演算の必要回数を計算
     # つまり、countの数だけ入力平面に対する重み行列の畳み込みが行われる。
     planes = np.transpose(planes, (0, 3, 1, 2))
+    print("planes",planes.shape)
     progress = 0
     x = None
     for model in model_list:
@@ -74,16 +76,37 @@ def upscale_and_denoise(images):#images=[batch,width,hight],Y of YUV
             x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NCHW")
             x = x + b
             x = tf.maximum(x, 0.1 * x)
-    with tf.Session() as sess:
+    with tf.Session(config=tf.ConfigProto(log_device_placement=False,gpu_options=tf.GPUOptions(allow_growth=False))) as sess:
         planes = sess.run(x)
     
     # ループ:ステップ 終わり
     planes = np.clip(planes, 0, 1) * 255
     return planes.astype(np.uint8)
     # 得られた出力平面の全要素を0~1にクリップした後、
-    
-images = upscale_and_denoise(np.array([[[1,1,1],[1,1,1],[1,1,1]],[[2,2,2],[2,2,2],[2,2,2]]]))
-print(images)
-sys.exit(0)
+
+input_image_list = []
+split_size = (640, 360)
+for i in range(1):# 1080 8G 25 * 346 * 484 
+    im = Image.open("mini_magi.png").convert("YCbCr") # 入力ファイルの読み込み -> YCbCr色空間への変換
+    width = 2 * im.size[0]
+    height =  2 * im.size[1]
+    im = misc.fromimage(im.resize((width, height), resample=Image.NEAREST)).astype("float32")
+    im_y = im[:,:,0]
+    im_y_output = np.zeros_like(im_y)
+    for w in range(0, width, split_size[0]):
+        for h in range(0,height, split_size[1]):
+            input_image_list = []
+            print(w,h)
+            input_image_list.append(im_y[0:split_size[0],0:split_size[1]])
+            images = upscale_and_denoise(np.array(input_image_list))
+            im_y_output[0:split_size[0],0:split_size[1]] = images
+    im[:,:,0] = im_y_output
+    misc.toimage(im, mode="YCbCr").convert("RGB").save("out.png")
+    sys.stderr.write("Done\n")
+    sys.exit(0)
+# images = upscale_and_denoise(np.array([[[1,1,1],[1,1,1],[1,1,1]],[[2,2,2],[2,2,2],[2,2,2]]]))
+# images = upscale_and_denoise(np.array(input_image_list))
+print(images.shape)
+
 misc.toimage(im, mode="YCbCr").convert("RGB").save(outfile)
 sys.stderr.write("Done\n")
