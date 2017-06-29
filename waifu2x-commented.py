@@ -97,9 +97,9 @@ for i in range(1):# 1080 8G 25 * 346 * 484
         for h in range(0,height, split_size[1]):
             input_image_list = []
             print(w,h)
-            input_image_list.append(im_y[0:split_size[0],0:split_size[1]])
+            input_image_list.append(im_y[h:h + split_size[1], w:w + split_size[0]])
             images = upscale_and_denoise(np.array(input_image_list))
-            im_y_output[0:split_size[0],0:split_size[1]] = images
+            im_y_output[h:h + split_size[1], w:w + split_size[0]] = images
     im[:,:,0] = im_y_output
     misc.toimage(im, mode="YCbCr").convert("RGB").save("out.png")
     sys.stderr.write("Done\n")
