@@ -9,6 +9,7 @@ from scipy import misc, signal # scipyより、その他処理、信号処理
 from PIL import Image # 画像ファイル取り扱いユーティリティ
 import os
 import tensorflow as tf
+import math
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # Model export script: https://mrcn.st/t/export_model.lua (needs a working waifu2x install)
 
@@ -61,7 +62,8 @@ def upscale_and_denoise(images, power = 1):#images:[batch,width,hight],Y of YUV 
     # つまり、countの数だけ入力平面に対する重み行列の畳み込みが行われる。
     planes = np.transpose(planes, (0, 1, 2, 3))
     progress = 0
-    x = tf.constant(planes, dtype=tf.float32)
+    input_images = tf.placeholder(tf.float32, shape=planes.shape)
+    x = input_images
     for i in range(power):
         x = tf.image.resize_nearest_neighbor(x,[planes.shape[1] * 2 ** (i + 1), planes.shape[2] * 2 ** (i + 1)])
         x = tf.pad(x, [[0,0],[padding_size, padding_size], [padding_size, padding_size],[0, 0]], "SYMMETRIC")
@@ -79,8 +81,9 @@ def upscale_and_denoise(images, power = 1):#images:[batch,width,hight],Y of YUV 
                 x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
                 x = x + b
                 x = tf.maximum(x, 0.1 * x)
-    with tf.Session(config = tf.ConfigProto(log_device_placement = False, gpu_options = tf.GPUOptions(allow_growth = False))) as sess:
-        planes = sess.run(x)
+    with tf.device('/gpu:2'):
+        with tf.Session(config = tf.ConfigProto(log_device_placement = False, gpu_options = tf.GPUOptions(allow_growth = False))) as sess:
+            planes  = sess.run(x, {input_images : planes})
     
     # ループ:ステップ 終わり
     planes = np.clip(planes, 0, 1) * 255
@@ -89,14 +92,19 @@ def upscale_and_denoise(images, power = 1):#images:[batch,width,hight],Y of YUV 
     # 得られた出力平面の全要素を0~1にクリップした後、
 
 input_image_list = []
-split_size = (320, 180)
-batch_size = 1
+input_size = np.array((640, 360))
+output_size = np.array((1920, 1080))
+ratio = output_size / input_size
+real_scale = ratio[0] if ratio[0] < ratio[1] else ratio[1]
+power = math.ceil(math.log2(real_scale))
+split_size = (160, 90)
+batch_size = 4
 for i in range(1):# 1080 8G 25 * 346 * 484 
     im = Image.open("mini_magi.png").convert("YCbCr") # 入力ファイルの読み込み -> YCbCr色空間への変換
     width = im.size[0]
     height =  im.size[1]
     im_y = misc.fromimage(im).astype("float32")[:,:,0]
-    scale = 4
+    scale = 2 ** power
     im = misc.fromimage(im.resize((width * scale, height * scale), resample=Image.NEAREST)).astype("float32")
     im_y_output = np.zeros(( height * scale, width * scale))
     print(im.shape, im_y_output.shape)
@@ -108,7 +116,7 @@ for i in range(1):# 1080 8G 25 * 346 * 484
             input_image_list.append(im_y[h:h + split_size[1], w:w + split_size[0]])
             location_list.append([w,h])
             if len(input_image_list) >= batch_size:
-                images = upscale_and_denoise(np.array(input_image_list), 2)
+                images = upscale_and_denoise(np.array(input_image_list), power)
                 for image,location in zip(images,location_list):
                     w = location[0]
                     h = location[1]
@@ -116,9 +124,9 @@ for i in range(1):# 1080 8G 25 * 346 * 484
                 input_image_list = []
                 location_list = []
     im[:,:,0] = im_y_output
-    misc.toimage(im, mode="YCbCr").convert("RGB").save("out.png")
+    misc.toimage(im, mode="YCbCr").convert("RGB").resize((int(input_size[0] * real_scale), int(input_size[1] * real_scale))).save("out.png")
     sys.stderr.write("Done\n")
-    sys.exit(0)
+sys.exit(0)
 # images = upscale_and_denoise(np.array([[[1,1,1],[1,1,1],[1,1,1]],[[2,2,2],[2,2,2],[2,2,2]]]))
 # images = upscale_and_denoise(np.array(input_image_list))
 print(images.shape)
