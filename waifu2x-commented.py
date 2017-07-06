@@ -39,6 +39,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 def upscale_and_denoise(images):#images=[batch,width,hight],Y of YUV
+    output_size = (images.shape[1] * 2, images.shape[2] * 2)
     #定数定義
     scalemodelpath = "scale2.0x_model.json"
     denoisemodelpath = "noise3_model.json"
@@ -48,7 +49,9 @@ def upscale_and_denoise(images):#images=[batch,width,hight],Y of YUV
     model_list.append(json.load(open(denoisemodelpath)))
     images = np.array(images)
     padding_size = len(model_list[0]) + len(model_list[1])
-    planes = np.pad(images,((0,0),(padding_size,padding_size),(padding_size,padding_size)), "edge") / 255.0
+    convolution_size = 3
+    # planes = np.pad(images,((0,0),(convolution_size, convolution_size),(convolution_size,convolution_size)), "edge") / 255.0
+    planes = images / 255.0
     planes = planes.reshape(planes.shape[0], planes.shape[1], planes.shape[2], 1)
     # 画像データの周りに、画像の端をコピーする形で、モデルの大きさ(核の行列の大きさ)分だけパッドを入れ、0~1の間でクリップする
     # このplanesは輝度情報のみを取り出している(!)
@@ -56,50 +59,53 @@ def upscale_and_denoise(images):#images=[batch,width,hight],Y of YUV
     
     # count = sum(step["nInputPlane"] * step["nOutputPlane"] for step in model)# 畳み込み演算の必要回数を計算
     # つまり、countの数だけ入力平面に対する重み行列の畳み込みが行われる。
-    planes = np.transpose(planes, (0, 3, 1, 2))
-    print("planes",planes.shape)
+    planes = np.transpose(planes, (0, 1, 2, 3))
     progress = 0
-    x = None
+    x = tf.constant(planes, dtype=tf.float32)
+    x = tf.image.resize_nearest_neighbor(x,[planes.shape[1] * 2,planes.shape[2] * 2])
+    x = tf.pad(x, [[0,0],[padding_size, padding_size], [padding_size, padding_size],[0, 0]], "SYMMETRIC")
     for model in model_list:
         for step in model: # ループ:ステップ(1つのモデル階層) 始め
-            if x is None:
-                 x = tf.constant(planes, dtype=tf.float32)
+
             # assert step["nInputPlane"] == planes.shape[1]
             # このステップのモデルに定義された入力平面の数と実際の入力平面の数は一致していなければならない
             # assert step["nOutputPlane"] == len(step["weight"]) == len(step["bias"])
             # モデルの出力平面はモデルの重み行列集合の数とそのバイアスの数と一致していなければならない
             # つまり、各ステップの重み行列集合の数とそのバイアスの数だけ、そのステップによって平面が出力される
             # o_planes = [] # 出力平面の格納場所を初期化
-           
             W = tf.constant(np.transpose(np.array(step["weight"]), (2, 3, 1, 0)), shape=(3, 3, step["nInputPlane"], step["nOutputPlane"]),dtype=tf.float32)
-            b = tf.constant(np.array(step["bias"]), shape=(1,step["nOutputPlane"], 1, 1), dtype=tf.float32)
-            x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NCHW")
+            b = tf.constant(np.array(step["bias"]), shape=(1, 1, 1, step["nOutputPlane"]), dtype=tf.float32)
+            x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
             x = x + b
             x = tf.maximum(x, 0.1 * x)
-    with tf.Session(config=tf.ConfigProto(log_device_placement=False,gpu_options=tf.GPUOptions(allow_growth=False))) as sess:
+    with tf.Session(config = tf.ConfigProto(log_device_placement = False, gpu_options = tf.GPUOptions(allow_growth = False))) as sess:
         planes = sess.run(x)
     
     # ループ:ステップ 終わり
     planes = np.clip(planes, 0, 1) * 255
+    planes = planes.reshape(output_size)
     return planes.astype(np.uint8)
     # 得られた出力平面の全要素を0~1にクリップした後、
 
 input_image_list = []
-split_size = (640, 360)
+split_size = (320, 180)
 for i in range(1):# 1080 8G 25 * 346 * 484 
     im = Image.open("mini_magi.png").convert("YCbCr") # 入力ファイルの読み込み -> YCbCr色空間への変換
-    width = 2 * im.size[0]
-    height =  2 * im.size[1]
-    im = misc.fromimage(im.resize((width, height), resample=Image.NEAREST)).astype("float32")
-    im_y = im[:,:,0]
-    im_y_output = np.zeros_like(im_y)
+    width = im.size[0]
+    height =  im.size[1]
+    im_y = misc.fromimage(im).astype("float32")[:,:,0]
+    im = misc.fromimage(im.resize((width * 2, height * 2), resample=Image.NEAREST)).astype("float32")
+    im_y_output = np.zeros(( height * 2, width * 2))
+    print(im.shape, im_y_output.shape)
     for w in range(0, width, split_size[0]):
         for h in range(0,height, split_size[1]):
             input_image_list = []
             print(w,h)
             input_image_list.append(im_y[h:h + split_size[1], w:w + split_size[0]])
             images = upscale_and_denoise(np.array(input_image_list))
-            im_y_output[h:h + split_size[1], w:w + split_size[0]] = images
+            print("images",images.shape)
+            print("output",h * 2 , (h + split_size[1]) * 2, w * 2 ,(w + split_size[0]) * 2)
+            im_y_output[h * 2 : (h + split_size[1]) * 2, w * 2 :(w + split_size[0]) * 2 ] = images
     im[:,:,0] = im_y_output
     misc.toimage(im, mode="YCbCr").convert("RGB").save("out.png")
     sys.stderr.write("Done\n")
