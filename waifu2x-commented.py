@@ -41,6 +41,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 def upscale_and_denoise(images, power = 1):#images:[batch,width,hight],Y of YUV power:the output size is 2^power times
     output_size = (images.shape[0], images.shape[1] * 2 ** power, images.shape[2] * 2 ** power)
+    data_type = tf.float16
     #定数定義
     scalemodelpath = "scale2.0x_model.json"
     denoisemodelpath = "noise3_model.json"
@@ -62,29 +63,31 @@ def upscale_and_denoise(images, power = 1):#images:[batch,width,hight],Y of YUV 
     # つまり、countの数だけ入力平面に対する重み行列の畳み込みが行われる。
     planes = np.transpose(planes, (0, 1, 2, 3))
     progress = 0
-    input_images = tf.placeholder(tf.float32, shape=planes.shape)
+    input_images = tf.placeholder(data_type, shape=[None, planes.shape[1], planes.shape[2], planes.shape[3]])
     x = input_images
+    c = []
     for i in range(power):
-        x = tf.image.resize_nearest_neighbor(x,[planes.shape[1] * 2 ** (i + 1), planes.shape[2] * 2 ** (i + 1)])
-        x = tf.pad(x, [[0,0],[padding_size, padding_size], [padding_size, padding_size],[0, 0]], "SYMMETRIC")
-        for model in model_list:
-            for step in model: # ループ:ステップ(1つのモデル階層) 始め
+        # with tf.device('/gpu:{}'.format(i)):
+        with tf.device('/gpu:0'):
+            x = tf.image.resize_nearest_neighbor(x,[planes.shape[1] * 2 ** (i + 1), planes.shape[2] * 2 ** (i + 1)])
+            x = tf.pad(x, [[0,0],[padding_size, padding_size], [padding_size, padding_size],[0, 0]], "SYMMETRIC")
+            for model in model_list:
+                for step in model: # ループ:ステップ(1つのモデル階層) 始め
+        
+                    # assert step["nInputPlane"] == planes.shape[1]
+                    # このステップのモデルに定義された入力平面の数と実際の入力平面の数は一致していなければならない
+                    # assert step["nOutputPlane"] == len(step["weight"]) == len(step["bias"])
+                    # モデルの出力平面はモデルの重み行列集合の数とそのバイアスの数と一致していなければならない
+                    # つまり、各ステップの重み行列集合の数とそのバイアスの数だけ、そのステップによって平面が出力される
+                    # o_planes = [] # 出力平面の格納場所を初期化
+                    W = tf.constant(np.transpose(np.array(step["weight"]), (2, 3, 1, 0)), shape=(3, 3, step["nInputPlane"], step["nOutputPlane"]),dtype=data_type)
+                    b = tf.constant(np.array(step["bias"]), shape=(1, 1, 1, step["nOutputPlane"]), dtype=data_type)
+                    x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
+                    x = x + b
+                    x = tf.maximum(x, 0.1 * x)
     
-                # assert step["nInputPlane"] == planes.shape[1]
-                # このステップのモデルに定義された入力平面の数と実際の入力平面の数は一致していなければならない
-                # assert step["nOutputPlane"] == len(step["weight"]) == len(step["bias"])
-                # モデルの出力平面はモデルの重み行列集合の数とそのバイアスの数と一致していなければならない
-                # つまり、各ステップの重み行列集合の数とそのバイアスの数だけ、そのステップによって平面が出力される
-                # o_planes = [] # 出力平面の格納場所を初期化
-                W = tf.constant(np.transpose(np.array(step["weight"]), (2, 3, 1, 0)), shape=(3, 3, step["nInputPlane"], step["nOutputPlane"]),dtype=tf.float32)
-                b = tf.constant(np.array(step["bias"]), shape=(1, 1, 1, step["nOutputPlane"]), dtype=tf.float32)
-                x = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
-                x = x + b
-                x = tf.maximum(x, 0.1 * x)
-    with tf.device('/gpu:2'):
-        with tf.Session(config = tf.ConfigProto(log_device_placement = False, gpu_options = tf.GPUOptions(allow_growth = False))) as sess:
-            planes  = sess.run(x, {input_images : planes})
-    
+    with tf.Session(config = tf.ConfigProto(log_device_placement = False, gpu_options = tf.GPUOptions(allow_growth = False))) as sess:
+        planes  = sess.run(x, {input_images : planes})    
     # ループ:ステップ 終わり
     planes = np.clip(planes, 0, 1) * 255
     planes = planes.reshape(output_size)
@@ -98,8 +101,8 @@ ratio = output_size / input_size
 real_scale = ratio[0] if ratio[0] < ratio[1] else ratio[1]
 power = math.ceil(math.log2(real_scale))
 split_size = (160, 90)
-batch_size = 4
-for i in range(1):# 1080 8G 25 * 346 * 484 
+batch_size = 16
+for i in range(5):# 1080 8G 25 * 346 * 484 
     im = Image.open("mini_magi.png").convert("YCbCr") # 入力ファイルの読み込み -> YCbCr色空間への変換
     width = im.size[0]
     height =  im.size[1]
